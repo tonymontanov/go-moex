@@ -41,7 +41,21 @@ in code comments.
    in `internal/iss/table.go`, where ISS is inherently low-frequency).
    Hand-written FIX tag=value codec and SBE decoders instead of
    `quickfixgo` — see `internal/fix/message.go` and
-   `internal/simba/decode.go` doc comments for the rationale.
+   `internal/simba/packet.go` doc comments for the rationale. The SIMBA
+   hot-path API is `simba.ParsePacket` + `Packet.Next` + value-type
+   accessors (`Message.OrderUpdate()`, `Snapshot().Entry(i)`, ...):
+   zero heap allocations per packet, enforced by
+   `TestParsePacketZeroAlloc`. `DecodePacket`/`Decoded` (pointer fields,
+   first message only) are compatibility wrappers — do not use them in
+   new code.
+4. **Wire truth comes from pcap, not from the spec.** Every change to
+   `internal/simba`, `orderbook` or `forts/stream.go` must keep
+   `go test ./cmd/simba-replay/` green (reference model vs. production
+   fixtures) and should be re-run with `simba-replay verify` on the full
+   MOEX captures. See `docs/rework-plan-2026-09-02.md` (plan and defect
+   list) and `docs/pcap-findings-2026-09-02.md` (what the wire actually
+   does: multi-message packets, RptSeq semantics, snapshot cycles,
+   schema version 8 in production).
 
 ## 3. MOEX connectivity model (why there's no single REST+WS client)
 
@@ -69,10 +83,16 @@ FORTS gateway), **ASTS Bridge** / equities FIX Gate (v2.0, Shares).
   token-bucket limiter, passport cookie auth.
 - `internal/fix` — FIX 4.4 tag=value codec, TCP framing, session layer
   (Logon/Heartbeat/MsgSeqNum/ResendRequest, jittered reconnect backoff).
-- `internal/simba` — SBE decoders for Heartbeat/SequenceReset/BestPrices/
-  EmptyBook/OrderUpdate/OrderExecution/OrderBookSnapshot + a **partial**
+- `internal/simba` — allocation-free packet iterator (`ParsePacket`,
+  `Packet.Next`, `Message.*` accessors) over every SBE message of a
+  datagram, schema-version-aware template mapping (`Kind`; versions 8 and
+  9), strict header guards (MsgSize, SchemaID, Version); a **partial**
   SecurityDefinition decode (Symbol/SecurityID prefix only — see §6), UDP
-  multicast listener.
+  multicast listener. `Walk`/`DecodePacket` are tolerant wrappers for the
+  harness and v1.0 callers.
+- `internal/pcap` + `cmd/simba-replay` — offline harness over MOEX's
+  public production captures (flows/stats/verify/extract) and golden
+  fixtures in `internal/simba/testdata/`.
 - `orderbook` — protocol-agnostic L3 engine (per-order state + L2
   aggregation, sequence-gap detection), reusable by `shares/` in v2.0.
 - `forts/` — `Client` (lifecycle/Connect/Close), `TradingClient` (order
@@ -122,30 +142,35 @@ forgotten between sessions.
    the crypto-index contracts, which it already does (no instrument-type
    restriction in `forts.TradingClient`). Revisit once margining currency
    is confirmed for the target contracts.
-5. **SIMBA A/B redundancy.** Spec §1.4.2 recommends joining both redundant
-   multicast groups (A and B carry identical data) and deduplicating by
-   MsgSeqNum, tolerating loss on either. v1.0's `forts/stream.go` joins
-   only group A. Deferred, not forgotten — becomes important once real
-   colocation traffic is flowing and packet loss is observed in practice.
-6. **SIMBA TCP Replay service.** Spec provides a Replay service to
-   actively request retransmission of a missed sequence range. v1.0
-   doesn't implement it — on a detected `RptSeq` gap, `orderbook.Engine`
-   is simply cleared and rebuilt from the next periodic
-   `OrderBookSnapshot`. Functionally safe, but recovery latency is "wait
-   for next snapshot cycle" instead of "instant". Revisit if that gap
-   matters in practice once trading live.
+5. **SIMBA A/B redundancy — DONE (stage 3, 2026-09-02).** `forts.BookSession`
+   joins both legs when `IncrementalGroupB`/`SnapshotGroupB` are set and
+   merges them by `MsgSeqNum` in `forts/feed.go` (duplicates dropped,
+   out-of-order packets held until the missing one arrives from either
+   leg). Joins are source-specific (`SIMBAConfig.SourceIPA/B`, Linux
+   `IP_ADD_SOURCE_MEMBERSHIP`, what MOEX's reference client does; any-source
+   fallback elsewhere). Verified offline with simulated 1–5 % loss per leg on
+   production captures (`simba-replay session -ab -loss ...`): zero book
+   mismatches.
+6. **SIMBA TCP Replay service — DONE (stage 3).** `internal/simba/replay.go`
+   implements §4.2.6 (Logon/MarketDataRequest/Logout over the Snapshot packet
+   framing, ≤1000 packets per request, 1 s activity timeout). The feed layer
+   requests a replay when a gap stays open for `FeedConfig.GapTimeout` (20 ms)
+   and falls back to the Snapshot feed if it fails or the gap is too large.
+   Untested against the real endpoint (no circuit yet) — only against the
+   protocol fake in `replay_test.go` and the capture-backed replayer of the
+   harness.
 7. **SIMBA socket buffer sizing.** `SIMBAConfig`/`ListenerConfig` expose
-   `SocketReadBufferBytes` (SO_RCVBUF) but v1.0 has no MOEX-recommended
-   value — needs to come from the colocation provisioning docs or MOEX
-   support once that environment exists.
-8. **`EmptyBook` per-instrument scoping.** The SBE `EmptyBook(4)` message
-   carries no `SecurityID` field. Per spec §4.2.8 it should apply only to
-   whatever instrument the stream's current position concerns; v1.0
-   conservatively clears the book for **every** tracked instrument on any
-   `EmptyBook`, which is safe (worst case: an extra unnecessary resync
-   wait) but coarser than the spec allows. Needs a second look once a
-   multi-instrument `WatchOrderBook` session is actually observed against
-   live traffic.
+   `SocketReadBufferBytes` (SO_RCVBUF) but there is no MOEX-recommended
+   value yet — needs to come from the colocation provisioning docs or MOEX
+   support once that environment exists. Production averages 3 500
+   packets/s on the Incremental feed with bursts at the open; start at
+   8–16 MB.
+8. **`EmptyBook` scoping — RESOLVED by captures.** `EmptyBook(4)` is a global
+   "clear every book" (daily reset / clearing, spec §4.2.8); no
+   per-instrument variant was observed in production traffic
+   (docs/pcap-findings-2026-09-02.md). After it the Incremental feed alone
+   defines the books (re-broadcast with `PossDupFlag`, `RptSeq=0`), which is
+   what `BookSession` implements.
 9. **`TimeInForceFOK` (tag 59 = "4").** Follows the FIX 4.4 standard
    enumeration; not explicitly confirmed against MOEX FORTS FIX Gate spec
    text at authoring time. Confirm against the test circuit once available.
@@ -178,17 +203,16 @@ forgotten between sessions.
   startup. This is a hard external-data-source limitation, not something
   more code can fix without a Plaza II clearing feed or broker EOD report
   integration (out of scope for v1.0).
-- **`orderbook.Engine.Levels(n)` is O(levels log levels) per call** (sorts
-  a map on every invocation). Fine for FORTS book depth; would need a
-  sorted structure (skip list / red-black tree) if profiling shows this
-  hot on a high-depth, high-frequency `WatchOrderBook` consumer. Public
-  API is stable either way.
+- **`orderbook.Engine` keeps price levels in two sorted slices** (stage 4):
+  top of book is O(1), `TopN(side, n, dst)` copies into the caller's buffer
+  without allocating, a new/emptied level costs a memmove of the side's
+  levels (hundreds of entries on FORTS). `Levels(n)` allocates a fresh
+  slice — convenience for non-hot callers.
 - **`Engine` is not internally synchronized** — callers must serialize
-  `ApplyDelta`/`LoadSnapshot`/`Clear` calls per instrument. Satisfied
-  naturally today because `forts/stream.go` runs one `Engine` per
-  `SecurityID`, fed by a single dispatch path (the SIMBA listener's read
-  goroutine) — do not start calling `Engine` methods from multiple
-  goroutines without adding your own locking.
+  `ApplyDelta`/`LoadSnapshot`/`Clear` calls per instrument.
+  `forts.BookSession` holds one mutex over all its books and invokes
+  `OnBook` under it; read engines only from that callback (or under your
+  own synchronisation with it).
 - **One SIMBA multicast interface (`NetworkInterface`) shared by every
   `Listen` call** — fine for a single-NIC colocation host; a multi-circuit
   redundant setup would need per-group interface selection, not modeled

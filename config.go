@@ -155,8 +155,14 @@ type SIMBAConfig struct {
 	InstrumentsGroupA string
 	InstrumentsGroupB string
 	// ReplayHost — TCP Replay service address (recovery of missed packets
-	// within the current trading session).
+	// within the current trading session), e.g. "91.203.255.244:7029".
 	ReplayHost string
+	// SourceIPA / SourceIPB — unicast source of every A (resp. B) group as
+	// listed in configuration.xml (production: 91.203.253.244 /
+	// 91.203.255.244). When set, joins are source-specific (SSM), which is
+	// what MOEX's reference client does; empty = any-source join.
+	SourceIPA string
+	SourceIPB string
 	// NetworkInterface — local interface name used to join the multicast
 	// groups (e.g. "eth0"). Required in a colocation environment with
 	// multiple NICs; empty ⇒ OS default interface selection.

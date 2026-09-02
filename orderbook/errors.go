@@ -12,17 +12,19 @@ package orderbook
 
 import "errors"
 
-// ErrSequenceGap is returned by Engine.ApplyDelta when seq is not exactly
-// the previously seen seq + 1. The caller (forts/stream.go) must treat the
-// local book as stale, discard it, and re-request a fresh snapshot
-// (OrderBookSnapshot for SIMBA SPECTRA) before resuming — per spec §1.4.6:
-// "if RptSeq ... is not exactly larger by one, this points to the fact
-// that some updates were missed".
+// ErrSequenceGap — seq is ahead of lastSeq+1: updates were lost (spec
+// §1.4.6/§4.2.5), the book is left untouched and the caller must resync
+// (LoadSnapshot) before applying further deltas.
 var ErrSequenceGap = errors.New("orderbook: sequence gap detected, resync required")
 
-// ErrUnknownOrder is returned by ApplyDelta(ActionDelete) / decrement paths
-// when the referenced OrderID is not currently tracked. Not fatal by
-// itself (can legitimately happen right after a resync boundary — see
-// spec's own note about the EmptyBook/OrderBookSnapshot race) — callers
-// typically log and continue rather than treating it as ErrSequenceGap.
+// ErrDuplicate — seq <= lastSeq: the update was already applied (A/B feed
+// redundancy, TCP Replay overlap). The book is left untouched; callers
+// count and ignore.
+var ErrDuplicate = errors.New("orderbook: duplicate sequence number, already applied")
+
+// ErrUnknownOrder — a Delete/Change for an order the book does not hold.
+// The sequence number IS consumed (the update was valid on the feed). On a
+// correctly synchronised book this never happens on production feeds
+// (docs/pcap-findings-2026-09-02.md: 0 in 2.1M updates), so it signals
+// desync — count it and consider a resync; never clear the book on it.
 var ErrUnknownOrder = errors.New("orderbook: unknown order id")

@@ -61,6 +61,53 @@ func TestEngineSequenceGapIsDetectedAndBlocksMutation(t *testing.T) {
 	}
 }
 
+func TestEngineSequencePolicy(t *testing.T) {
+	var e *Engine = NewEngine()
+	// Unsequenced updates (seq 0) are applied and never tracked.
+	if err := e.ApplyDelta(1, SideBid, 100, 1, ActionUpsert, 0); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.ApplyDelta(2, SideBid, 100, 1, ActionUpsert, 0); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := e.LastSeq(); ok {
+		t.Fatal("seq 0 must not be tracked")
+	}
+	// First sequenced update after unsequenced ones is accepted at any number.
+	mustApply(t, e, 3, SideAsk, 200, 1, ActionUpsert, 7)
+	// Duplicate: rejected, book untouched, not a gap.
+	if err := e.ApplyDelta(4, SideAsk, 200, 1, ActionUpsert, 7); !errors.Is(err, ErrDuplicate) || e.OrderCount() != 3 {
+		t.Fatalf("duplicate: err=%v orders=%d", err, e.OrderCount())
+	}
+	if err := e.ApplyDelta(4, SideAsk, 200, 1, ActionUpsert, 3); !errors.Is(err, ErrDuplicate) {
+		t.Fatalf("older seq: %v", err)
+	}
+	// AdvanceSeq consumes a number without touching the book.
+	if err := e.AdvanceSeq(8); err != nil || e.OrderCount() != 3 {
+		t.Fatalf("AdvanceSeq: %v", err)
+	}
+	if err := e.AdvanceSeq(8); !errors.Is(err, ErrDuplicate) {
+		t.Fatalf("AdvanceSeq duplicate: %v", err)
+	}
+	if err := e.AdvanceSeq(10); !errors.Is(err, ErrSequenceGap) {
+		t.Fatalf("AdvanceSeq gap: %v", err)
+	}
+	mustApply(t, e, 5, SideBid, 90, 1, ActionUpsert, 9)
+	// Unknown order consumes the sequence number.
+	if err := e.ApplyDelta(999, SideBid, 0, 0, ActionDelete, 10); !errors.Is(err, ErrUnknownOrder) {
+		t.Fatalf("unknown: %v", err)
+	}
+	if seq, _ := e.LastSeq(); seq != 10 {
+		t.Fatalf("unknown order must consume seq, got %d", seq)
+	}
+	// Clear resets the tracker: next update accepted at any number.
+	e.Clear()
+	if _, ok := e.LastSeq(); ok || e.OrderCount() != 0 {
+		t.Fatal("Clear must reset seq and book")
+	}
+	mustApply(t, e, 6, SideBid, 90, 1, ActionUpsert, 1)
+}
+
 func TestEngineLoadSnapshotResetsSeqAndBook(t *testing.T) {
 	var e *Engine = NewEngine()
 	mustApply(t, e, 1, SideBid, 9500000, 10, ActionUpsert, 1)

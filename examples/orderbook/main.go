@@ -32,16 +32,17 @@ import (
 )
 
 func main() {
-	var instrumentsGroup string = os.Getenv("MOEX_SIMBA_INSTRUMENTS_GROUP_A")
-	var incrementalGroup string = os.Getenv("MOEX_SIMBA_INCREMENTAL_GROUP_A")
-	if instrumentsGroup == "" || incrementalGroup == "" {
-		log.Fatal("MOEX_SIMBA_INSTRUMENTS_GROUP_A and MOEX_SIMBA_INCREMENTAL_GROUP_A are required (issued by MOEX/broker after colocation setup)")
-	}
+	// Production "primary" (A) groups from configuration.xml on
+	// ftp.moex.com/pub/SIMBA/Spectra/prod/primary/ — override for B/test.
+	var instrumentsGroup string = envOr("MOEX_SIMBA_INSTRUMENTS_GROUP_A", "239.195.20.83:20083")
+	var incrementalGroup string = envOr("MOEX_SIMBA_INCREMENTAL_GROUP_A", "239.195.20.81:20081")
+	var snapshotGroup string = envOr("MOEX_SIMBA_SNAPSHOT_GROUP_A", "239.195.20.82:20082")
 	var symbol string = envOr("MOEX_FORTS_SYMBOL", "Si-12.26")
 
 	var cfg moex.Config = moex.DefaultConfig()
 	cfg.SIMBA.InstrumentsGroupA = instrumentsGroup
 	cfg.SIMBA.IncrementalGroupA = incrementalGroup
+	cfg.SIMBA.SnapshotGroupA = snapshotGroup
 	cfg.SIMBA.NetworkInterface = os.Getenv("MOEX_SIMBA_INTERFACE")
 
 	var client, err = moex.NewClient(cfg)

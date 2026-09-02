@@ -95,88 +95,36 @@ type Decoded struct {
 	NewSeqNo *uint32
 }
 
-// DecodePacket parses one full UDP datagram payload.
+// DecodePacket parses one full UDP datagram payload and decodes its FIRST
+// SBE message into the pointer-based Decoded. Kept for v1.0 callers; hot
+// paths use ParsePacket/Packet.Next (no allocation, every message).
 func DecodePacket(buf []byte) (Decoded, error) {
 	var out Decoded
-	var rest []byte
+	var first bool = true
+	var decodeErr error
+	var info PacketInfo
 	var err error
-
-	out.PacketHeader, rest, err = ParsePacketHeader(buf)
-	if err != nil {
-		return out, err
-	}
-
-	if out.PacketHeader.IsIncremental() {
-		var ih IncrementalHeader
-		ih, rest, err = parseIncrementalHeader(rest)
-		if err != nil {
-			return out, err
+	info, err = Walk(buf, func(hdr SBEHeader, body []byte) bool {
+		if !first {
+			return false
 		}
+		first = false
+		out.SBE = hdr
+		decodeErr = DecodeMessage(hdr, body, &out)
+		return false
+	})
+	out.PacketHeader = info.Header
+	if info.Header.IsIncremental() {
+		var ih IncrementalHeader = info.Incremental
 		out.Incremental = &ih
 	}
-
-	out.SBE, rest, err = parseSBEHeader(rest)
 	if err != nil {
 		return out, err
 	}
-
-	switch out.SBE.TemplateID {
-	case TemplateHeartbeat:
-		// No body.
-	case TemplateSequenceReset:
-		if len(rest) < 4 {
-			return out, fmt.Errorf("simba: SequenceReset body too short")
-		}
-		var v uint32 = binary.LittleEndian.Uint32(rest[0:4])
-		out.NewSeqNo = &v
-	case TemplateBestPrices:
-		var bp *BestPrices
-		bp, err = decodeBestPrices(rest, out.SBE.BlockLength)
-		if err != nil {
-			return out, err
-		}
-		out.BestPrices = bp
-	case TemplateEmptyBook:
-		var eb *EmptyBook
-		eb, err = decodeEmptyBook(rest)
-		if err != nil {
-			return out, err
-		}
-		out.EmptyBook = eb
-	case TemplateOrderUpdate:
-		var ou *OrderUpdate
-		ou, err = decodeOrderUpdate(rest)
-		if err != nil {
-			return out, err
-		}
-		out.OrderUpdate = ou
-	case TemplateOrderExecution:
-		var oe *OrderExecution
-		oe, err = decodeOrderExecution(rest)
-		if err != nil {
-			return out, err
-		}
-		out.OrderExecution = oe
-	case TemplateOrderBookSnapshot:
-		var obs *OrderBookSnapshot
-		obs, err = decodeOrderBookSnapshot(rest, out.SBE.BlockLength)
-		if err != nil {
-			return out, err
-		}
-		out.OrderBookSnapshot = obs
-	case TemplateSecurityDefinition:
-		var sd *SecurityDefinition
-		sd, err = decodeSecurityDefinitionPrefix(rest)
-		if err != nil {
-			return out, err
-		}
-		out.SecurityDefinition = sd
-	default:
-		// Unknown/unsupported template (SecurityDefinition, SecurityStatus,
-		// TradingSessionStatus, ...) — not an error, just not decoded in v1.0.
+	if first {
+		return out, fmt.Errorf("simba: packet too short for SBE messageHeader: %d bytes", len(buf)-packetHeaderSize)
 	}
-
-	return out, nil
+	return out, decodeErr
 }
 
 const bestPricesEntrySize = 8 + 8 + 8 + 8 + 4 // 36
