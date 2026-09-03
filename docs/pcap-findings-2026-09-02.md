@@ -3,7 +3,7 @@
 Дата: 2026-09-02. Этап 0 плана переработки (`docs/rework-plan-2026-09-02.md`).
 Инструмент: `cmd/simba-replay` (этот репозиторий). Данные: официальные
 записи прод-трафика с `https://ftp.moex.com/pub/SIMBA/Spectra/prod/pcap/`
-(локально `~/artefacts/moex-pcap/`):
+:
 
 | Дамп | Окно (UTC) | Что внутри |
 |---|---|---|
@@ -172,9 +172,9 @@ FTP 22.06.2026, дампы от 15.05.2026; какая версия в прод�
 
 ```bash
 go build -o /tmp/simba-replay ./cmd/simba-replay
-/tmp/simba-replay flows  -pcap ~/artefacts/moex-pcap/SIMBA-2026-05-15_0959_1005.zip
-/tmp/simba-replay stats  -pcap ~/artefacts/moex-pcap/SIMBA-2026-05-15_0959_1005.zip -examples 8
-/tmp/simba-replay verify -pcap ~/artefacts/moex-pcap/SIMBA-2026-05-15_0959_1005.zip
+/tmp/simba-replay flows  -pcap SIMBA-2026-05-15_0959_1005.zip
+/tmp/simba-replay stats  -pcap SIMBA-2026-05-15_0959_1005.zip -examples 8
+/tmp/simba-replay verify -pcap SIMBA-2026-05-15_0959_1005.zip
 /tmp/simba-replay extract -pcap ... -sec 7299709,3416766 -from 3s -to 26s -out fixture.pcap.gz
 go test ./cmd/simba-replay/   # golden-тест оракула на testdata/*.pcap.gz
 ```
