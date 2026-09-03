@@ -127,21 +127,15 @@ forgotten between sessions.
    receive UDP data until colocation/broker circuit is live — same
    "compiles, doesn't have a live socket yet" state as the FIX trading
    path before test credentials arrive).
-3. **Qualified investor status.** User confirmed they are a qualified
-   investor at broker BKS (БКС) and is in the process of transferring that
-   status to the broker that will provide MOEX/FORTS connectivity for this
-   project (status transfer between brokers is possible per user). FORTS
-   crypto-index and Si futures are qualified-investor-only instruments —
-   this transfer must complete before live trading, not before development.
-4. **Currency hedging (SI1!/SI2!).** User flagged this specifically for
-   the case where crypto-index futures (BTC/ETH/SOL/XRP/TRX) are RUB-margined
-   — a USD/RUB hedge (via Si futures) would then be needed to keep USD-
-   denominated crypto exposure clean of FX risk. Not yet implemented:
-   this is a **trading-strategy concern for `sleipnir-trading-core`**, not
-   an SDK concern — `go-moex` just needs to support trading Si alongside
-   the crypto-index contracts, which it already does (no instrument-type
-   restriction in `forts.TradingClient`). Revisit once margining currency
-   is confirmed for the target contracts.
+3. **Instrument access.** Some FORTS instruments are restricted to
+   qualified investors; the account used for live trading must have that
+   status with the broker providing connectivity before go-live (not
+   before development).
+4. **Currency hedging.** If the target contracts are RUB-margined, a
+   USD/RUB hedge (Si futures) is a trading-strategy concern for the
+   consuming application, not an SDK concern — `go-moex` only needs to
+   support trading Si alongside other contracts, which it already does
+   (no instrument-type restriction in `forts.TradingClient`).
 5. **SIMBA A/B redundancy — DONE (stage 3, 2026-09-02).** `forts.BookSession`
    joins both legs when `IncrementalGroupB`/`SnapshotGroupB` are set and
    merges them by `MsgSeqNum` in `forts/feed.go` (duplicates dropped,
@@ -244,17 +238,8 @@ real, currently-listed instrument.
 
 ## 8. Next steps
 
-1. `sleipnir-trading-core`: create branch `moex-connector` from `qa`
-   (localize all MOEX-related changes there per project convention).
-2. Add `internal/connectors/moex/{common,forts}` + `Exchange` enum entries
-   (`moex_forts`, naming decided per §2 principle 2) + a
-   `factory.ProduceExchange` case wiring `forts.Client` into the existing
-   `ExchangeConnector` composite interface (`TradingConnector` +
-   `MarketDataConnector` + `FuturesAccountConnector`).
-3. Once test-circuit credentials arrive (§5.1): smoke-test `Connect` +
-   `CreateOrder`/`CancelOrder` against the FORTS test environment, then
-   revisit items in §5 that are marked "confirm against test circuit."
-4. Once colocation/broker circuit is live (§5.2): validate `WatchOrderBook`
-   against real SIMBA traffic, then prioritize §5 items 5/6/8 (A/B
-   redundancy, TCP Replay, EmptyBook scoping) based on observed behavior
-   rather than speculative correctness.
+See `docs/roadmap-2026-09-03.md`. In short: finish the SIMBA leftovers
+(remaining captures, full Instruments feed, on-site probe, CI), build the
+TWIME leg offline against the schema and certification samples, and write
+the integration ADR for the consuming application; live checks follow the
+test-circuit credentials and colocation.
