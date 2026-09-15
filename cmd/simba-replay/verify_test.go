@@ -83,3 +83,25 @@ func TestVerifyTechBreakFixture(t *testing.T) {
 		t.Fatalf("expected the whole rebroadcast to be RptSeq=0: %s", formatApply(&lazy))
 	}
 }
+
+// Evening clearing: EmptyBook with a live session and no re-issue in the
+// window (pcap-findings N16). Snapshots taken before the EmptyBook packet
+// (L < its MsgSeqNum) must be compared with the pre-clearing book, later
+// ones with the empty book carrying an unknown RptSeq.
+func TestVerifyClearingFixture(t *testing.T) {
+	var src *pcap.Source = openFixture(t, "clearing-emptybook-2instr.pcap.gz")
+	defer src.Close()
+	var vs *verifyState
+	var err error
+	vs, err = verifyCapture(src.Reader, defaultOpts())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if vs.seqResets != 0 || vs.emptyBooks != 1 {
+		t.Fatalf("expected no SequenceReset and one EmptyBook, got %d/%d", vs.seqResets, vs.emptyBooks)
+	}
+	var compares, mismatches, _, _, rptMism, _, _, _ = vs.totals()
+	if compares < 100 || mismatches != 0 || rptMism != 0 {
+		t.Fatalf("snapshot oracle across EmptyBook: compares=%d mismatches=%d rptMism=%d", compares, mismatches, rptMism)
+	}
+}
