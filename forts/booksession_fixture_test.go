@@ -3,6 +3,7 @@ package forts
 import (
 	"encoding/binary"
 	"io"
+	"math"
 	"testing"
 
 	"github.com/tonymontanov/go-moex/internal/pcap"
@@ -136,7 +137,10 @@ func bestPricesAndEOT(t *testing.T, payload []byte) (bp map[int32]bpExpectation,
 	return bp, eot
 }
 
-func runFixtureOracle(t *testing.T, name string, secs []int32) {
+// afterClearing — the fixture ends after an EmptyBook with no re-issue
+// (evening clearing, pcap-findings N16): books must be Live and EMPTY at
+// the end instead of Live and populated.
+func runFixtureOracle(t *testing.T, name string, secs []int32, afterClearing bool) {
 	var inc, snap = loadFixture(t, name)
 	if len(inc) == 0 || len(snap) == 0 {
 		t.Fatalf("fixture %s: inc=%d snap=%d", name, len(inc), len(snap))
@@ -150,8 +154,14 @@ func runFixtureOracle(t *testing.T, name string, secs []int32) {
 	var next int // next incremental packet to deliver.
 	var pendingBP map[int32]bpExpectation = make(map[int32]bpExpectation)
 	var bpChecks, bpMismatches, compares, mismatches int
+	// deliverInc hands the session every incremental packet with
+	// MsgSeqNum <= upTo. A snapshot with L = 0 has seen no incremental at
+	// all, so upTo == 0 delivers nothing (an EmptyBook delivered early
+	// would clear a book the snapshot still describes as populated —
+	// the clearing fixture, pcap-findings N16); the final flush passes
+	// math.MaxUint32.
 	var deliverInc = func(upTo uint32) {
-		for next < len(inc) && (upTo == 0 || inc[next].seq <= upTo) {
+		for next < len(inc) && inc[next].seq <= upTo {
 			var bp map[int32]bpExpectation
 			var eot bool
 			bp, eot = bestPricesAndEOT(t, inc[next].payload)
@@ -258,15 +268,16 @@ func runFixtureOracle(t *testing.T, name string, secs []int32) {
 			}
 		}
 		var seq uint64
-		seq, _ = engine.LastSeq()
-		if diff != 0 || (sc.R != 0 && seq != uint64(sc.R)) {
+		var seqKnown bool
+		seq, seqKnown = engine.LastSeq() // unknown after EmptyBook — see N16.
+		if diff != 0 || (sc.R != 0 && seqKnown && seq != uint64(sc.R)) {
 			mismatches++
 			if mismatches <= 3 {
 				t.Errorf("snapshot mismatch sec=%d L=%d: %d order diffs, engine seq=%d snapshot rpt=%d (book=%d snap=%d)", sc.sec, sc.L, diff, seq, sc.R, len(got), len(sc.orders))
 			}
 		}
 	}
-	deliverInc(0)
+	deliverInc(math.MaxUint32)
 
 	var st BookSessionStats = s.Stats()
 	t.Logf("%s: compares=%d mismatches=%d bestprices=%d/%d stats=%s", name, compares, mismatches, bpChecks, bpMismatches, st)
@@ -279,6 +290,22 @@ func runFixtureOracle(t *testing.T, name string, secs []int32) {
 	if st.ParseErrors != 0 || st.UnknownOrders != 0 || st.Resyncs != 0 || st.IncGaps != 0 || st.SnapGaps != 0 {
 		t.Fatalf("unexpected stats: %s", st)
 	}
+	if afterClearing {
+		if st.EmptyBooks != 1 {
+			t.Fatalf("expected exactly one EmptyBook, stats=%s", st)
+		}
+		for sec, e := range engines {
+			var state BookState
+			state, _ = s.State(sec)
+			var seq uint64
+			var known bool
+			seq, known = e.LastSeq()
+			if state != BookLive || e.OrderCount() != 0 || known {
+				t.Fatalf("instrument %d after clearing: state=%v orders=%d seq=%d known=%v (want live, empty, counter unknown)", sec, state, e.OrderCount(), seq, known)
+			}
+		}
+		return
+	}
 	for sec, e := range engines {
 		if st, _ := s.State(sec); st != BookLive || e.OrderCount() == 0 {
 			t.Fatalf("instrument %d not live/non-empty at end: state=%v orders=%d", sec, st, e.OrderCount())
@@ -287,11 +314,18 @@ func runFixtureOracle(t *testing.T, name string, secs []int32) {
 }
 
 func TestBookSessionMainSessionFixture(t *testing.T) {
-	runFixtureOracle(t, "main-session-2instr.pcap.gz", []int32{7299709, 3416766})
+	runFixtureOracle(t, "main-session-2instr.pcap.gz", []int32{7299709, 3416766}, false)
 }
 
 func TestBookSessionTechBreakFixture(t *testing.T) {
-	runFixtureOracle(t, "tech-break-2instr.pcap.gz", []int32{7559029, 7293491})
+	runFixtureOracle(t, "tech-break-2instr.pcap.gz", []int32{7559029, 7293491}, false)
+}
+
+// Evening clearing (2026-05-15 21:07:17 UTC): one EmptyBook with a live
+// session, no SequenceReset, no PossDup re-issue in the window; the
+// exchange's snapshots keep the old RptSeq for the still-empty books.
+func TestBookSessionClearingFixture(t *testing.T) {
+	runFixtureOracle(t, "clearing-emptybook-2instr.pcap.gz", []int32{7878394, 6631439}, true)
 }
 
 // Guard against fixture/decoder drift: the first incremental packet of

@@ -86,6 +86,20 @@ func (c *correlator[T]) Resolve(clOrdID string, value T, err error) bool {
 	return true
 }
 
+// failAll delivers err to every waiter and clears the table — used when
+// the transport session ends so in-flight calls do not hang until their
+// ctx expires.
+func (c *correlator[T]) failAll(err error) {
+	c.mu.Lock()
+	pending := c.pending
+	c.pending = make(map[string]chan result[T])
+	c.mu.Unlock()
+	var zero T
+	for _, ch := range pending {
+		ch <- result[T]{value: zero, err: err}
+	}
+}
+
 // Wait blocks on ch until a value arrives or ctx is done. On ctx
 // cancellation the registration is cleaned up so it can't leak.
 func (c *correlator[T]) Wait(ctx context.Context, clOrdID string, ch chan result[T]) (T, error) {

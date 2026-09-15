@@ -1,0 +1,38 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gofmt
+        run: |
+          out="$(gofmt -l .)"
+          if [ -n "$out" ]; then echo "gofmt needed:"; echo "$out"; exit 1; fi
+      - name: go mod tidy is clean
+        run: |
+          go mod tidy
+          git diff --exit-code -- go.mod go.sum
+      - name: go vet
+        run: go vet ./...
+      - name: go test -race
+        run: go test -race -count=1 ./...
+      # Hot-path invariants: these tests fail if a change starts allocating
+      # in the steady state (SIMBA parser, book engine, book session, TWIME
+      # codec/session).
+      - name: allocation gates
+        run: go test -count=1 -run 'ZeroAlloc|SteadyStateAllocs' ./internal/simba/ ./orderbook/ ./forts/ ./internal/twime/
+      - name: benchmarks (informational)
+        run: go test -run xxx -bench 'BenchmarkParsePacket|BenchmarkEngine' -benchmem ./internal/simba/ ./orderbook/ | grep -E '^Benchmark|^ok' || true

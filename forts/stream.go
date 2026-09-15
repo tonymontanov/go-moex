@@ -104,9 +104,7 @@ func (mc *MarketDataClient) ResolveSecurityID(ctx context.Context, symbol string
 				continue
 			}
 			var sym string = sd.SymbolString()
-			mc.c.simbaMu.Lock()
-			mc.c.symbolToSecurityID[sym] = sd.SecurityID
-			mc.c.simbaMu.Unlock()
+			mc.c.rememberSecurityID(sym, sd.SecurityID)
 			if sym == symbol {
 				found = sd.SecurityID
 				cancel()

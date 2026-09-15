@@ -13,7 +13,8 @@ Unlike Binance/OKX/Bybit, MOEX has no single "API key + REST/WS" surface.
 | Transport | Purpose | Access model |
 |---|---|---|
 | **ISS** (HTTP/REST) | Reference data, historical candles | Public, no credentials (free tier: ~15 min delayed) |
-| **FIX Gate** (FIX 4.4 / TCP) | Order entry (New/Cancel/Replace/MassCancel) | Requires a broker/exchange-issued FIX session |
+| **TWIME SPECTRA** (SBE / TCP) | Order entry (New/Cancel/Replace/MassCancel), low-latency gateway | Requires an exchange-issued TWIME login (IP-authenticated); selected by `Config.TWIME.Addr` |
+| **FIX Gate** (FIX 4.4 / TCP) | Order entry, fallback transport | Requires a broker/exchange-issued FIX session |
 | **SIMBA SPECTRA** (SBE / UDP multicast) | Live order book | Requires exchange colocation or a broker low-latency circuit |
 
 See [`docs/handoff.md`](docs/handoff.md) for the full connectivity model,
@@ -71,8 +72,10 @@ Runnable examples covering all three transports live in
 
 - [`examples/market-data`](examples/market-data) — reference data and
   candles via ISS. Works with zero setup.
-- [`examples/trading`](examples/trading) — order entry via FIX Gate.
-  Requires `MOEX_FIX_SENDER_COMP_ID` / `MOEX_FIX_ACCOUNT`.
+- [`examples/trading`](examples/trading) — order entry over TWIME
+  (`MOEX_TWIME_ADDR` / `MOEX_TWIME_LOGIN` / `MOEX_TWIME_ACCOUNT` /
+  `MOEX_TWIME_SECURITY_ID`) or FIX Gate (`MOEX_FIX_SENDER_COMP_ID` /
+  `MOEX_FIX_ACCOUNT`); same code path either way.
 - [`examples/orderbook`](examples/orderbook) — live order book via SIMBA
   SPECTRA. Requires exchange colocation and
   `MOEX_SIMBA_INSTRUMENTS_GROUP_A` / `MOEX_SIMBA_INCREMENTAL_GROUP_A`.
@@ -82,13 +85,15 @@ Runnable examples covering all three transports live in
 ```
 moex.Client (root)
   └── Forts() → forts.Client            (lazy, registered via init())
-        ├── MarketDataClient   — ISS reference data/candles, SIMBA order book
-        ├── TradingClient      — FIX Gate order entry
+        ├── MarketDataClient   — ISS reference data/candles, SIMBA order book, SIMBA instruments (InstrumentSession: SecurityID/limits/status cache)
+        ├── TradingClient      — order entry over TWIME (Config.TWIME.Addr set) or FIX Gate
         └── AccountClient      — fill-derived position tracking
 
 internal/iss     — generic ISS REST client (columnar JSON table parser, rate limiting, auth)
 internal/fix     — FIX 4.4 tag=value codec + session layer (Logon/Heartbeat/seq/reconnect)
 internal/simba   — SBE binary decoders + UDP multicast listener for SIMBA SPECTRA
+internal/sbe     — SBE primitives shared by SIMBA and TWIME (messageHeader, Decimal5, LE accessors)
+internal/twime   — TWIME SPECTRA codec (schema 7.7) + TCP session layer + per-second pacer; forts/twime.go is the order-entry leg on top of it (selected by Config.TWIME.Addr)
 orderbook        — protocol-agnostic L3 order book engine (shared by every section)
 ```
 

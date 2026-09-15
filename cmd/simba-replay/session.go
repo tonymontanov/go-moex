@@ -115,7 +115,7 @@ func runSession(rd *pcap.Reader, opts runOptions) error {
 
 	var next int
 	var pendingBP map[int32]bpExpect = make(map[int32]bpExpect)
-	var bpChecks, bpMism, compares, mismatches, deferred, unverifiable int
+	var bpChecks, bpMism, compares, mismatches, deferred, unverifiable, seqUnchecked int
 	// caughtUp reports whether the session has processed every packet up
 	// to and including seq. With simulated loss a dropped packet is only
 	// detectable once a later one arrives, which lazy delivery withholds —
@@ -330,9 +330,18 @@ func runSession(rd *pcap.Reader, opts runOptions) error {
 				diff++
 			}
 		}
+		// RptSeq is compared only while the engine knows its counter. After
+		// EmptyBook (evening clearing) the engine forgets it on purpose —
+		// the exchange keeps the old RptSeq in snapshots of not-yet-
+		// re-issued instruments (0 orders) and the next update may carry
+		// either old+1 or 0 (PossDup re-issue), see pcap-findings N16.
 		var seq uint64
-		seq, _ = engine.LastSeq()
-		if diff != 0 || (ps.R != 0 && seq != uint64(ps.R)) {
+		var seqKnown bool
+		seq, seqKnown = engine.LastSeq()
+		if !seqKnown && ps.R != 0 {
+			seqUnchecked++
+		}
+		if diff != 0 || (ps.R != 0 && seqKnown && seq != uint64(ps.R)) {
 			mismatches++
 			if examples < opts.examples || opts.verbose {
 				examples++
@@ -360,7 +369,7 @@ func runSession(rd *pcap.Reader, opts runOptions) error {
 		fmt.Printf("capture replayer: requests=%d packets_served=%d\n", replayer.requests, replayer.served)
 	}
 	fmt.Printf("instruments=%d live=%d empty_books=%d\n", len(engines), live, empty)
-	fmt.Printf("snapshot oracle: compares=%d mismatches=%d skipped_older_than_capture=%d unverifiable(session not caught up at L)=%d\n", compares, mismatches, deferred, unverifiable)
+	fmt.Printf("snapshot oracle: compares=%d mismatches=%d skipped_older_than_capture=%d unverifiable(session not caught up at L)=%d rptseq_unchecked(engine counter unknown)=%d\n", compares, mismatches, deferred, unverifiable, seqUnchecked)
 	fmt.Printf("bestprices oracle: checks=%d mismatches=%d\n", bpChecks, bpMism)
 	fmt.Printf("session stats: %s\n", session.Stats())
 	if mismatches != 0 || bpMism != 0 {

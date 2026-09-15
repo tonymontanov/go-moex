@@ -16,6 +16,18 @@ COUNTER NAMING IN THE SDK (see docs for full list):
 	moex_simba_packets_dropped_total
 	moex_simba_gap_detected_total
 	moex_iss_requests_total
+	moex_twime_messages_sent_total{template}
+	moex_twime_messages_received_total{template}
+	moex_twime_heartbeats_sent_total
+	moex_twime_flood_rejects_total
+	moex_twime_session_rejects_total{reason}
+	moex_twime_business_rejects_total
+	moex_twime_retransmit_requests_total
+	moex_twime_retransmitted_messages_total
+	moex_twime_seq_mismatch_total
+	moex_twime_terminates_total{code}
+	moex_twime_pacer_waits_total
+	moex_twime_establish_rejects_total{code}
 */
 package moexmet
 

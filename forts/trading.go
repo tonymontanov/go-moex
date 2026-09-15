@@ -39,14 +39,19 @@ type massCancelResult struct {
 }
 
 // CreateOrder sends a New Order Single and waits for the first Execution
-// Report (ExecType=New or Rejected). Further fills are delivered via
-// WatchOpenOrders / GetOpenOrders, not this call's return value.
+// Report (ExecType=New or Rejected) — or, on TWIME, for
+// NewOrderSingleResponse / BusinessMessageReject. Further fills are
+// delivered via WatchOpenOrders / GetOpenOrders, not this call's return
+// value.
 func (tc *TradingClient) CreateOrder(ctx context.Context, req types.CreateOrderRequest) (*types.OrderInfo, error) {
 	if req.Quantity <= 0 {
-		return nil, moex.NewError(moex.TransportFIX, moex.ErrorKindInvalidRequest, "", "forts: CreateOrderRequest.Quantity must be > 0", nil)
+		return nil, moex.NewError(tc.c.orderEntryTransport(), moex.ErrorKindInvalidRequest, "", "forts: CreateOrderRequest.Quantity must be > 0", nil)
 	}
 	if req.Price.IsZero() {
-		return nil, moex.NewError(moex.TransportFIX, moex.ErrorKindInvalidRequest, "", "forts: CreateOrderRequest.Price is required — FORTS FIX Gate has no Market OrdType, send an aggressive limit price with TimeInForceIOC/FOK instead", nil)
+		return nil, moex.NewError(tc.c.orderEntryTransport(), moex.ErrorKindInvalidRequest, "", "forts: CreateOrderRequest.Price is required — FORTS has no Market OrdType, send an aggressive limit price with TimeInForceIOC/FOK instead", nil)
+	}
+	if leg := tc.c.twime(); leg != nil {
+		return leg.createOrder(ctx, req)
 	}
 
 	var session *fix.Session
@@ -90,6 +95,9 @@ func (tc *TradingClient) CreateOrder(ctx context.Context, req types.CreateOrderR
 // CancelOrder sends an Order Cancel Request and waits for the resulting
 // Execution Report (ExecType=Canceled) or Order Cancel Reject.
 func (tc *TradingClient) CancelOrder(ctx context.Context, req types.CancelOrderRequest) (*types.OrderInfo, error) {
+	if leg := tc.c.twime(); leg != nil {
+		return leg.cancelOrder(ctx, req)
+	}
 	var session *fix.Session
 	var err error
 	session, err = tc.c.session()
@@ -129,6 +137,9 @@ func (tc *TradingClient) CancelOrder(ctx context.Context, req types.CancelOrderR
 // ModifyOrder sends an Order Cancel/Replace Request (price/quantity only —
 // FORTS does not support side/symbol replacement).
 func (tc *TradingClient) ModifyOrder(ctx context.Context, req types.ModifyOrderRequest) (*types.OrderInfo, error) {
+	if leg := tc.c.twime(); leg != nil {
+		return leg.modifyOrder(ctx, req)
+	}
 	var session *fix.Session
 	var err error
 	session, err = tc.c.session()
@@ -170,6 +181,9 @@ func (tc *TradingClient) ModifyOrder(ctx context.Context, req types.ModifyOrderR
 // symbol/side/account as provided (zero values mean "all", matching the
 // FIX Gate default semantics — see fields.go doc on MassCancelRequestType).
 func (tc *TradingClient) CancelAllOrders(ctx context.Context, symbol string, side types.Side, account string) error {
+	if leg := tc.c.twime(); leg != nil {
+		return leg.cancelAll(ctx, symbol, side, account)
+	}
 	var session *fix.Session
 	var err error
 	session, err = tc.c.session()

@@ -65,6 +65,10 @@ func (b refBook) best(side simba.MDEntryType) (px int64, size int64, ok bool) {
 
 type incMsg struct {
 	msgSeq uint32
+	// clear — the message is an EmptyBook: wipe the book and forget the
+	// RptSeq counter. Queued like any update so the lazy book applies it
+	// in MsgSeqNum order relative to snapshot L (pcap-findings N16).
+	clear  bool
 	rpt    uint32
 	exec   bool
 	action simba.MDUpdateAction
@@ -88,6 +92,13 @@ type applyStats struct {
 }
 
 func (b refBook) apply(m *incMsg, st *applyStats, lastRpt *uint32, haveRpt *bool) {
+	if m.clear {
+		for id := range b {
+			delete(b, id)
+		}
+		*lastRpt, *haveRpt = 0, false
+		return
+	}
 	if m.rpt == 0 {
 		st.unsequenced++
 	} else {
@@ -326,11 +337,13 @@ func (vs *verifyState) onIncremental(pkt pcap.Packet) {
 			vs.emptyBooks++
 			vs.afterEmptyBook = true
 			for _, in := range vs.instr {
-				in.lazy = make(refBook)
-				in.live = make(refBook)
-				in.pending = in.pending[:0]
-				in.lazyHave, in.liveHave = false, false
+				// Not applied immediately: a snapshot whose L precedes this
+				// packet must still be compared against the pre-clearing
+				// book, so the clear travels through pending like an update
+				// (the live book, by arrival time, is cleared right away via
+				// push).
 				in.synced = true // books are rebuilt from the OrderUpdate rebroadcast, not from a snapshot.
+				vs.push(in.id, incMsg{msgSeq: seq, clear: true})
 			}
 		case d.NewSeqNo != nil:
 			vs.seqResets++
