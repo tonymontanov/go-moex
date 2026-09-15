@@ -58,7 +58,13 @@ type Config struct {
 	// ISS — reference data / candles / history transport settings.
 	ISS ISSConfig
 	// FIX — order entry transport settings (FIX Gate, Derivatives market).
+	// Used by forts.Client.Connect only when TWIME is not configured.
 	FIX FIXConfig
+	// TWIME — order entry over TWIME SPECTRA (binary SBE over TCP, the
+	// low-latency gateway). When TWIME.Addr is set, forts.Client.Connect
+	// uses it instead of FIX Gate; FIX stays available as the fallback
+	// transport for deployments without a TWIME login.
+	TWIME TWIMEConfig
 	// SIMBA — market data transport settings (order book). Empty by default:
 	// multicast groups are issued per-client by MOEX after colocation setup.
 	SIMBA SIMBAConfig
@@ -132,6 +138,58 @@ type FIXConfig struct {
 	ReconnectJitter         float64
 }
 
+// Reference TWIME endpoints from the exchange's connection guide (M1
+// backup data center; the primary DSP addresses are issued with the login).
+const (
+	// DefaultTWIMEHostM1 — M1 data center address.
+	DefaultTWIMEHostM1 string = "91.203.254.32"
+	// DefaultTWIMEPortTransactional — transactional gateway port.
+	DefaultTWIMEPortTransactional int = 9000
+	// DefaultTWIMEPortRecovery — recovery gateway port (same login; not
+	// used by the SDK yet).
+	DefaultTWIMEPortRecovery int = 9001
+)
+
+// TWIMEConfig — TWIME SPECTRA (Derivatives market, order entry) transport.
+// Selected for order entry when Addr is non-empty. There is no password:
+// the gateway authenticates the login (Credentials) against the source
+// IP. A login is a single TCP session; a second Establish with the same
+// login terminates both.
+type TWIMEConfig struct {
+	// Addr — host:port of the transactional gateway. Empty = TWIME
+	// disabled, FIX Gate is used for order entry.
+	Addr string
+	// Credentials — TWIME login (String20). Required when Addr is set.
+	Credentials string
+	// Account — default 7-symbol client account for requests that carry
+	// none (TWIME requires an Account on every order, unlike FIX Gate).
+	Account string
+	// ComplianceID — marks who originated the order: 'R' (Algorithm,
+	// default — this SDK is for algorithmic clients), 'M' Manual, 'S'
+	// StopLoss, 'A' Autofollow, ' ' NotAvailable.
+	ComplianceID byte
+	// KeepaliveInterval — the client's heartbeat promise (1s..60s).
+	// Default 10s. The gateway ends the session after 1–2 intervals of
+	// silence; the SDK heartbeats at half the interval when idle.
+	KeepaliveInterval time.Duration
+	// DialTimeout / EstablishTimeout — TCP connect and Establish→Ack
+	// waits. Defaults 5s / 5s (the gateway allows 10s for Establish).
+	DialTimeout      time.Duration
+	EstablishTimeout time.Duration
+	// TradingRate — trading messages per second the login is allowed:
+	// 30 x performance units of the login. Default 30. The SDK paces
+	// sends under this budget; exceeding it costs FloodReject penalties
+	// and, at 2x, a Terminate(TooFastClient).
+	TradingRate int
+	// MaxRecoverMessages — largest gap of missed server messages the SDK
+	// recovers through the transactional gateway on reconnect (10 per
+	// request, about one request per second). Default 1000.
+	MaxRecoverMessages int
+}
+
+// Enabled reports whether TWIME is the configured order-entry transport.
+func (c TWIMEConfig) Enabled() bool { return c.Addr != "" }
+
 // SIMBAConfig — SIMBA SPECTRA (Derivatives market, market data) transport.
 // All fields are client-specific and issued by MOEX/broker after colocation
 // is provisioned; see docs/handoff.md "Open questions" for what is still
@@ -202,6 +260,14 @@ func DefaultConfig() Config {
 			ReconnectMaxBackoff:     10 * time.Second,
 			ReconnectJitter:         0.2,
 		},
+		TWIME: TWIMEConfig{
+			ComplianceID:       'R',
+			KeepaliveInterval:  10 * time.Second,
+			DialTimeout:        5 * time.Second,
+			EstablishTimeout:   5 * time.Second,
+			TradingRate:        30,
+			MaxRecoverMessages: 1000,
+		},
 		Orderbook: OrderbookConfig{
 			MaxDepth:         0,
 			GapResyncEnabled: true,
@@ -262,6 +328,25 @@ func (c Config) withDefaults() Config {
 		c.FIX.ReconnectJitter = def.FIX.ReconnectJitter
 	}
 
+	if c.TWIME.ComplianceID == 0 {
+		c.TWIME.ComplianceID = def.TWIME.ComplianceID
+	}
+	if c.TWIME.KeepaliveInterval == 0 {
+		c.TWIME.KeepaliveInterval = def.TWIME.KeepaliveInterval
+	}
+	if c.TWIME.DialTimeout == 0 {
+		c.TWIME.DialTimeout = def.TWIME.DialTimeout
+	}
+	if c.TWIME.EstablishTimeout == 0 {
+		c.TWIME.EstablishTimeout = def.TWIME.EstablishTimeout
+	}
+	if c.TWIME.TradingRate == 0 {
+		c.TWIME.TradingRate = def.TWIME.TradingRate
+	}
+	if c.TWIME.MaxRecoverMessages == 0 {
+		c.TWIME.MaxRecoverMessages = def.TWIME.MaxRecoverMessages
+	}
+
 	if c.Logger == nil {
 		c.Logger = NoopLogger()
 	}
@@ -284,6 +369,17 @@ func (c Config) withDefaults() Config {
 func (c Config) validate() error {
 	if c.ISS.BaseURL == "" {
 		return NewError(TransportUnknown, ErrorKindInvalidRequest, "", "config: ISS.BaseURL is empty", nil)
+	}
+	if c.TWIME.Enabled() {
+		if c.TWIME.Credentials == "" {
+			return NewError(TransportTWIME, ErrorKindInvalidRequest, "", "config: TWIME.Credentials (login) is required when TWIME.Addr is set", nil)
+		}
+		if len(c.TWIME.Credentials) > 20 {
+			return NewError(TransportTWIME, ErrorKindInvalidRequest, "", "config: TWIME.Credentials is longer than 20 bytes", nil)
+		}
+		if len(c.TWIME.Account) > 7 {
+			return NewError(TransportTWIME, ErrorKindInvalidRequest, "", "config: TWIME.Account is longer than 7 bytes", nil)
+		}
 	}
 	return nil
 }

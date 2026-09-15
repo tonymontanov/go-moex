@@ -66,6 +66,10 @@ const (
 	TimeInForceFOK TimeInForce = "4"
 	// TimeInForceGTD — Good-Till-Date. Requires ExpireDate (tag 432).
 	TimeInForceGTD TimeInForce = "6"
+	// TimeInForceBOC — Book-Or-Cancel (post-only: rejected instead of
+	// matching as the aggressor). TWIME only (TimeInForceEnum 122); FIX
+	// Gate rejects it.
+	TimeInForceBOC TimeInForce = "122"
 )
 
 // OrdStatus — current order status (FIX tag 39), carried on every

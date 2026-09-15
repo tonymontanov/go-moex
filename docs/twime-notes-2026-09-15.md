@@ -10,7 +10,33 @@
 
 Реализация: `internal/sbe` (общие SBE-примитивы), `internal/twime`
 (`schema.go`, `messages.go`, `encode_server.go`, `codec.go`, `pacer.go`,
-`session.go`, `metrics.go`).
+`session.go`, `metrics.go`), `internal/twime/twimetest` (фейк-шлюз для
+тестов), `forts/twime.go` (нога заявок `TradingClient`; включается
+`Config.TWIME.Addr`, FIX Gate остаётся запасным транспортом).
+
+## Что отличается от FIX-ноги на уровне forts/
+
+- Инструмент адресуется числовым `SecurityID`: кэш `Client` заполняется
+  SIMBA Instruments-фидом (`MarketData().ResolveSecurityID`) или руками
+  `Client.SetSecurityID(symbol, id)` — без колокации ISS числовой id не даёт.
+- `ClientOrderID` — десятичная строка `uint64`; сгенерированные id
+  стартуют от текущего времени в микросекундах, поэтому уникальны и после
+  рестарта процесса без персистентности.
+- OrdStatus на проводе нет: `New` при остатке > 0 в `NewOrderSingleResponse`,
+  `Filled` при остатке 0, `PartiallyFilled/Filled` по `ExecutionSingleReport`,
+  `Canceled` по `OrderCancelResponse` (в т.ч. незапрошенный — COD, кросс,
+  клиринг), замещённая заявка при `OrderReplaceResponse` помечается `Canceled`.
+- Отказы приходят отдельными сообщениями и возвращаются как `*moex.Error`
+  (`TransportTWIME`, `Code` = `OrdRejReason`/причина/`FloodReject`), а не как
+  `OrderInfo{Status: Rejected}`; подписчикам `WatchOpenOrders` для новой
+  заявки дополнительно уходит `Rejected`.
+- `Account` (String7) обязателен на каждом запросе: из запроса или
+  `Config.TWIME.Account`. `ComplianceID` по умолчанию `'R'` (алгоритм).
+- `EmptyBook` (старт клиринга) снимает все локальные открытые заявки.
+- Конец сессии: in-flight вызовы получают `ErrorKindNetwork`, следующий
+  `Connect` переустанавливает сессию и запрашивает пропущенные сообщения
+  по сохранённому `NextSeqNo`; автоматического реконнект-цикла в forts нет
+  (как и у FIX).
 
 ## Провод
 
