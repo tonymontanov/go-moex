@@ -85,7 +85,7 @@ Runnable examples covering all three transports live in
 ```
 moex.Client (root)
   └── Forts() → forts.Client            (lazy, registered via init())
-        ├── MarketDataClient   — ISS reference data/candles, SIMBA order book
+        ├── MarketDataClient   — ISS reference data/candles, SIMBA order book, SIMBA instruments (InstrumentSession: SecurityID/limits/status cache)
         ├── TradingClient      — order entry over TWIME (Config.TWIME.Addr set) or FIX Gate
         └── AccountClient      — fill-derived position tracking
 

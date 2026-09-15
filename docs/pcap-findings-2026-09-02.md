@@ -261,3 +261,23 @@ UTC; 2862 пакета: 11 инкрементальных — 10 Heartbeat и Em
 счётчик неизвестен), `TestVerifyClearingFixture`. В окне фикстуры нет ни
 одного OrderUpdate — она проверяет именно оракул вокруг EmptyBook, не
 сборку книги.
+
+## 8. Дополнение 15.09.2026: раскладка SecurityDefinition схемы 8 (A2)
+
+XML схемы 8 биржа не публикует (в `prod/backup/` только 2.0–5.0), но там
+лежит `PythonSimbaClient-8.0.zip` с захардкоженной раскладкой v8. Сверка
+с XML 9.0 и с прод-пакетами (`.83:20083`, blockLength 326):
+голова 0…182 идентична; v8 несёт `MaturityDate`/`MaturityTime` (uint32 ×2)
+по 182/186 и `Flags` по 190, дальше все поля v9 сдвинуты на +8;
+`SettlPrice` в v8 — float64 (в v9 Decimal5); в конце v8 — `TradePeriodAccess`
+uint64 по 318 (в python-клиенте 8.0 его ещё нет, на проводе есть).
+`SecurityStatus` v8 (70) — префикс v9 (86), `TradingSessionStatus` (48) и
+`SecurityDefinitionUpdateReport` (28) одинаковы. Порядок полей в группе
+`NoInstrAttrib` в v8 обратный (значение, потом тип). Инфо-потоки не
+фрагментируются, одно сообщение на пакет; FUT-INFO Replay — цикл ~7,9 с на
+745 инструментов, OPT-INFO — ~165 с на 36 492; `SecurityGroupStatus`(22) —
+30 320 пакетов за 6 минут основной сессии на FUT-INFO Replay, его схема пока
+не декодируется. Фикстура `internal/simba/testdata/fut-info-4instr.pcap.gz`
+(вырезка `extract_info.py`, не штатный `extract`: 4 инструмента, 2 цикла,
+22 с; в окне нет ни одного `SecurityStatus`). Календарный спред
+`NGU6NGV6` котируется в USD — не считать `Currency == "RUB"` инвариантом.

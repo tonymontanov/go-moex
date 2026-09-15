@@ -205,13 +205,20 @@ type SIMBAConfig struct {
 	SnapshotGroupB string
 	// InstrumentsGroupA / InstrumentsGroupB — multicast group:port for the
 	// two redundant "Instruments" feeds (SecurityDefinition and friends —
-	// used by forts.Client.ResolveSecurityID to map a human symbol like
-	// "Si-12.25" to the numeric SecurityID SIMBA order/trade messages key
-	// on). Distinct multicast groups from Incremental/Snapshot per §1.2 of
+	// used by forts.InstrumentSession and forts.Client.ResolveSecurityID
+	// to map a human symbol like "Si-12.25" to the numeric SecurityID
+	// SIMBA order/trade messages key on, and to track limits/status). Distinct multicast groups from Incremental/Snapshot per §1.2 of
 	// the connection procedure ("Start listening to the Instruments
 	// Incremental stream...").
 	InstrumentsGroupA string
 	InstrumentsGroupB string
+	// InstrumentsIncrementalGroupA / InstrumentsIncrementalGroupB —
+	// multicast group:port of the Instruments *Incremental* feeds
+	// (intraday SecurityStatus / SecurityDefinitionUpdateReport /
+	// TradingSessionStatus). Optional: forts.InstrumentSession joins them
+	// in addition to the Replay groups above when set.
+	InstrumentsIncrementalGroupA string
+	InstrumentsIncrementalGroupB string
 	// ReplayHost — TCP Replay service address (recovery of missed packets
 	// within the current trading session), e.g. "91.203.255.244:7029".
 	ReplayHost string

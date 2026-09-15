@@ -12,7 +12,7 @@ import (
 // packet must pass the strict ParsePacket guards and yield exactly the
 // messages the tolerant Walk sees.
 func TestFixturesParseStrict(t *testing.T) {
-	for _, name := range []string{"main-session-2instr.pcap.gz", "tech-break-2instr.pcap.gz", "clearing-emptybook-2instr.pcap.gz"} {
+	for _, name := range []string{"main-session-2instr.pcap.gz", "tech-break-2instr.pcap.gz", "clearing-emptybook-2instr.pcap.gz", "fut-info-4instr.pcap.gz"} {
 		t.Run(name, func(t *testing.T) {
 			var src *pcap.Source
 			var err error
@@ -83,7 +83,7 @@ func TestFixturesParseStrict(t *testing.T) {
 				}
 				packets++
 			}
-			if packets == 0 || (kinds[KindOrderUpdate] == 0 && kinds[KindEmptyBook] == 0) || kinds[KindOrderBookSnapshot] == 0 {
+			if packets == 0 || (kinds[KindOrderUpdate] == 0 && kinds[KindEmptyBook] == 0 && kinds[KindSecurityDefinition] == 0) || (kinds[KindOrderBookSnapshot] == 0 && kinds[KindSecurityDefinition] == 0) {
 				t.Fatalf("fixture too thin: packets=%d kinds=%v", packets, kinds)
 			}
 			t.Logf("%s: packets=%d messages=%d kinds=%v", name, packets, messages, kinds)
