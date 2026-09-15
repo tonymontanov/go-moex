@@ -89,6 +89,8 @@ moex.Client (root)
 internal/iss     — generic ISS REST client (columnar JSON table parser, rate limiting, auth)
 internal/fix     — FIX 4.4 tag=value codec + session layer (Logon/Heartbeat/seq/reconnect)
 internal/simba   — SBE binary decoders + UDP multicast listener for SIMBA SPECTRA
+internal/sbe     — SBE primitives shared by SIMBA and TWIME (messageHeader, Decimal5, LE accessors)
+internal/twime   — TWIME SPECTRA codec (schema 7.7) + TCP session layer + per-second pacer (offline; not yet wired into forts/)
 orderbook        — protocol-agnostic L3 order book engine (shared by every section)
 ```
 
